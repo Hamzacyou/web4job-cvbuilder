@@ -22,6 +22,11 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'status',
+        'cvs_created',
+        'pdf_exports',
+        'subscription_price',
+        'subscription_end_date',
     ];
 
     /**
@@ -43,7 +48,18 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'subscription_end_date' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function cvs()
+    {
+        return $this->hasMany(CV::class);
+    }
+
+    public function activities()
+    {
+        return $this->hasMany(Activity::class);
     }
 }

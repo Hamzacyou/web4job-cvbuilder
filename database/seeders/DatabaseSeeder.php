@@ -21,6 +21,12 @@ class DatabaseSeeder extends Seeder
         ], [
             'name' => 'Administrateur',
             'password' => Hash::make('admin'),
+            'status' => 'Actif',
+            'cvs_created' => 0,
+            'pdf_exports' => 0,
         ]);
+
+        // Create 50 test users with realistic data
+        User::factory()->count(50)->create();
     }
 }

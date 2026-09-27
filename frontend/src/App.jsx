@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import './App.css'
 import web4jobLogo from './assets/web4job.png'
+import AdminDashboard from './AdminDashboard'
+import UserDashboard from './UserDashboard'
 
 function App() {
   const [page, setPage] = useState('signin')
-  const [role, setRole] = useState('admin')
+  const [role, setRole] = useState('user')
   const [loginError, setLoginError] = useState('')
   const [registrationMessage, setRegistrationMessage] = useState('')
   const [registeredUser, setRegisteredUser] = useState(() => {
@@ -20,35 +22,165 @@ function App() {
     setPage('dashboard')
   }
 
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('resumeflow-user')
+    } catch {}
+    setRegisteredUser(null)
+    setLoginError('')
+    setRegistrationMessage('')
+    setRole('user')
+    setPage('signin')
+  }
+
   if (page === 'dashboard') {
-    return <Dashboard role={role} onNavigate={setPage} onSwitchRole={openDashboard} />
+    return <Dashboard role={role} onNavigate={setPage} onSwitchRole={openDashboard} registeredUser={registeredUser} onUpdateUser={setRegisteredUser} onLogout={handleLogout} />
   }
 
   return (
     <AuthPage
       mode={page}
-      onModeChange={setPage}
+      onModeChange={(newPage) => {
+        setLoginError('')
+        setRegistrationMessage('')
+        setPage(newPage)
+      }}
       loginError={loginError}
       registrationMessage={registrationMessage}
+      onQuickDashboard={openDashboard}
       onSubmit={(credentials) => {
         if (page === 'signup') {
-          const user = { name: `${credentials.firstName} ${credentials.lastName}`.trim(), email: credentials.email, password: credentials.password }
-          localStorage.setItem('resumeflow-user', JSON.stringify(user))
-          setRegisteredUser(user)
+          const pass = (credentials.password || '')
+          if (!pass || pass.length < 8) {
+            setLoginError('Le mot de passe doit comporter au moins 8 caractères.')
+            return
+          }
+
+          const emailClean = (credentials.email || '').trim().toLowerCase()
+          const signupKey = `_${emailClean}`
+
+          const user = {
+            firstName: credentials.firstName?.trim() || '',
+            lastName: credentials.lastName?.trim() || '',
+            name: `${credentials.firstName || ''} ${credentials.lastName || ''}`.trim(),
+            email: emailClean,
+            password: credentials.password,
+            expertise: credentials.expertise?.trim() || ''
+          }
+
+          // Save user in multi-user records
+          try {
+            if (emailClean) {
+              localStorage.setItem(`w4j_user_account_${emailClean}`, JSON.stringify(user))
+              const list = JSON.parse(localStorage.getItem('w4j_registered_users')) || []
+              const idx = list.findIndex(u => (u.email || '').trim().toLowerCase() === emailClean)
+              if (idx >= 0) list[idx] = user
+              else list.push(user)
+              localStorage.setItem('w4j_registered_users', JSON.stringify(list))
+            }
+          } catch {}
+
+          // Initialize fresh profile and CV specifically for this user
+          const newProfile = {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            jobTitle: user.expertise || '',
+            location: '',
+            email: user.email,
+            bio: '',
+            country: 'France',
+            language: 'Français',
+            photoUrl: null,
+            verified: true,
+            plan: 'Plan Pro'
+          }
+          localStorage.setItem(`w4j_user_profile${signupKey}`, JSON.stringify(newProfile))
+
+          const newCv = {
+            title: `${user.expertise || 'Mon CV'}.pdf`,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            jobTitle: user.expertise || '',
+            email: user.email,
+            phone: '',
+            location: '',
+            photoUrl: null,
+            experiences: [],
+            education: [],
+            projects: [],
+            skills: user.expertise ? [user.expertise] : [],
+            languages: [{ id: 1, name: 'Français', level: 'NATIF' }]
+          }
+          localStorage.setItem(`w4j_user_cv${signupKey}`, JSON.stringify(newCv))
+
+          // Initialize an empty CVs list for this newly registered user
+          localStorage.setItem(`w4j_user_cvs${signupKey}`, JSON.stringify([]))
+
+          // Reset registeredUser in memory so previous session is completely gone
+          try {
+            localStorage.removeItem('resumeflow-user')
+          } catch {}
+          setRegisteredUser(null)
           setLoginError('')
           setRegistrationMessage('Inscription réussie ! Vous pouvez maintenant vous connecter avec vos identifiants.')
           setPage('signin')
           return
         }
-        const matchesAdmin = credentials.email === 'admin' && credentials.password === 'admin'
-        const matchesRegisteredUser = registeredUser && credentials.email === registeredUser.email && credentials.password === registeredUser.password
-        if (!matchesAdmin && !matchesRegisteredUser) {
+
+        const inputEmail = (credentials.email || '').trim().toLowerCase()
+        const inputPassword = credentials.password || ''
+
+        const matchesAdmin = (inputEmail === 'admin' || credentials.email === 'admin') && inputPassword === 'admin'
+
+        // Always reload freshly from localStorage to ensure newly changed password is recognized
+        let storedUser = null
+        try {
+          storedUser = JSON.parse(localStorage.getItem('resumeflow-user'))
+        } catch {}
+
+        let scopedUser = null
+        if (inputEmail) {
+          try {
+            scopedUser = JSON.parse(localStorage.getItem(`w4j_user_account_${inputEmail}`))
+          } catch {}
+        }
+
+        let userList = []
+        try {
+          userList = JSON.parse(localStorage.getItem('w4j_registered_users')) || []
+        } catch {}
+
+        let matchedUser = null
+        if (storedUser && (storedUser.email?.trim().toLowerCase() === inputEmail || storedUser.email === credentials.email) && storedUser.password === inputPassword) {
+          matchedUser = storedUser
+        } else if (scopedUser && scopedUser.password === inputPassword) {
+          matchedUser = scopedUser
+        } else {
+          matchedUser = userList.find(u => 
+            (u.email?.trim().toLowerCase() === inputEmail || u.email === credentials.email) &&
+            u.password === inputPassword
+          )
+        }
+
+        // Fallback to in-memory registeredUser if matched
+        if (!matchedUser && registeredUser && 
+            (registeredUser.email?.trim().toLowerCase() === inputEmail || registeredUser.email === credentials.email) && 
+            registeredUser.password === inputPassword) {
+          matchedUser = registeredUser
+        }
+
+        if (!matchesAdmin && !matchedUser) {
           setLoginError('Identifiant ou mot de passe incorrect.')
           return
         }
+
         setLoginError('')
         setRegistrationMessage('')
-        openDashboard(matchesRegisteredUser ? 'user' : 'admin')
+        if (matchedUser) {
+          setRegisteredUser(matchedUser)
+          localStorage.setItem('resumeflow-user', JSON.stringify(matchedUser))
+        }
+        openDashboard(matchedUser ? 'user' : 'admin')
       }}
     />
   )
@@ -58,24 +190,55 @@ function Brand() {
   return <div className="brand"><img src={web4jobLogo} alt="Web4Jobs" style={{ display: 'block', width: '220px', maxHeight: '74px', objectFit: 'contain', objectPosition: 'left center' }} /></div>
 }
 
-function AuthPage({ mode, onModeChange, onSubmit, loginError, registrationMessage }) {
+function AuthPage({ mode, onModeChange, onSubmit, loginError, registrationMessage, onQuickDashboard }) {
   const isSignup = mode === 'signup'
   return (
     <main className={`auth-page ${isSignup ? 'signup-page' : ''}`}>
       <section className="auth-panel" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         <Brand />
         <div className="auth-heading">
-          <h1>{isSignup ? 'JOIN RESUMEFLOW' : 'WELCOME BACK'}</h1>
+          <h1>{isSignup ? 'JOIN WEB4JOBS CV BUILDER' : 'WELCOME BACK'}</h1>
           <p>{isSignup ? 'Create your free account and start building your career today.' : 'Please enter your details to log in to your account.'}</p>
         </div>
-        <form className="auth-form" onSubmit={(event) => { event.preventDefault(); onSubmit({ firstName: event.currentTarget.firstName?.value || '', lastName: event.currentTarget.lastName?.value || '', email: event.currentTarget.email.value, password: event.currentTarget.password.value }) }}>
+        <form className="auth-form" onSubmit={(event) => {
+          event.preventDefault()
+          onSubmit({
+            firstName: event.currentTarget.firstName?.value || '',
+            lastName: event.currentTarget.lastName?.value || '',
+            email: event.currentTarget.email?.value || '',
+            password: event.currentTarget.password?.value || '',
+            expertise: event.currentTarget.expertise?.value || ''
+          })
+        }}>
           {isSignup && <div className="field-row"><Field name="firstName" label="FIRST NAME" placeholder="John" /><Field name="lastName" label="LAST NAME" placeholder="Doe" /></div>}
           <Field name="email" label="EMAIL ADDRESS" placeholder={isSignup ? 'name@company.com' : 'name@company.com'} type="text" />
-          <Field name="password" label="PASSWORD" placeholder={isSignup ? 'At least 8 characters' : '••••••••••••'} type="password" />
-          {isSignup && <Field label="EXPERTISE" placeholder="UI/UX Design" />}
-          {!isSignup && <label className="remember"><input type="checkbox" /> Remember me for 30 days</label>}
+          <Field name="password" label="PASSWORD" placeholder={isSignup ? 'Au moins 8 caractères' : '••••••••••••'} type="password" minLength={isSignup ? 8 : undefined} />
+          {isSignup && <Field name="expertise" label="EXPERTISE" placeholder="UI/UX Design" />}
           <button className="primary-button" type="submit">{isSignup ? 'CREATE FREE ACCOUNT' : 'LOG IN TO ACCOUNT'}</button>
         </form>
+
+        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => onQuickDashboard && onQuickDashboard('user')}
+            style={{
+              width: '100%',
+              padding: '11px 12px',
+              borderRadius: '9px',
+              border: '1.5px solid #3e2675',
+              background: '#f4effc',
+              color: '#3e2675',
+              fontWeight: '700',
+              fontSize: '11px',
+              cursor: 'pointer',
+              letterSpacing: '0.4px',
+              boxShadow: '0 2px 8px rgba(62, 38, 117, 0.12)'
+            }}
+          >
+            ✦ DÉMO : ACCÉDER DIRECTEMENT AU DASHBOARD UTILISATEUR
+          </button>
+        </div>
+
         {loginError && <p className="login-error">{loginError}</p>}
         {registrationMessage && <p style={{ margin: '12px 0 -8px', color: '#129666', textAlign: 'center', fontSize: '10px', fontWeight: 700 }}>{registrationMessage}</p>}
         {isSignup ? <p className="legal">By clicking “Create Free Account”, you agree to our <a href="#terms">Terms of Service</a> and <a href="#privacy">Privacy Policy.</a></p> : null}
@@ -93,24 +256,35 @@ function AuthPage({ mode, onModeChange, onSubmit, loginError, registrationMessag
   )
 }
 
-function Field({ name, label, placeholder, type = 'text', action }) {
-  return <label className="field"><span>{label}<em>{action}</em></span><input name={name} type={type} placeholder={placeholder} required /></label>
+function Field({ name, label, placeholder, type = 'text', action, minLength }) {
+  return (
+    <label className="field">
+      <span>{label}<em>{action}</em></span>
+      <input name={name} type={type} placeholder={placeholder} minLength={minLength} required />
+    </label>
+  )
 }
 
-function Dashboard({ role, onNavigate, onSwitchRole }) {
-  const user = role === 'user'
-  const title = user ? 'Mon espace utilisateur' : 'Admin dashboard'
-  const stats = user ? [['MES CV', '3', '+1', 'purple'], ['PROFIL', '82%', '+12.4%', 'blue'], ['VUES DU CV', '248', '+18.9%', 'green'], ['CANDIDATURES', '12', '+4', 'orange']] : [['TOTAL USERS', '24,892', '+12.4%', 'purple'], ['ACTIVE RESUMES', '18,430', '+8.2%', 'blue'], ['MONTHLY REVENUE', '$48,290', '+18.9%', 'green'], ['SUPPORT TICKETS', '38', '-4.1%', 'orange']]
-  return <main className="dashboard-page">
-    <aside className="sidebar"><Brand /><div className="role-badge">{user ? 'UTILISATEUR' : 'ADMINISTRATOR'}</div><nav><button className="active"><span>▦</span> {user ? 'Mon aperçu' : 'Overview'}</button><button><span>♙</span> {user ? 'Mes CV' : 'User management'}</button><button><span>◫</span> {user ? 'Candidatures' : 'Analytics'}</button><button><span>⚙</span> Settings</button></nav><button className="logout" onClick={() => onNavigate('signin')}>↪ &nbsp; Log out</button></aside>
-    <section className="dashboard-main"><header className="dash-header"><div><span className="eyebrow">MONDAY, SEPTEMBER 07, 2026</span><h1>{user ? 'Bonjour utilisateur' : 'Bonjour administrateur'}</h1><p>{title} · Here’s what’s happening with your workspace today.</p></div><div className="header-actions"><button className="icon-button">⌕</button><button className="icon-button">♧</button><span className="profile-avatar">AM</span><button className="profile-name">{user ? 'Mon profil' : 'Admin'} ▾</button></div></header>
-      <div className="dashboard-toolbar"><div className="tabs"><button className="selected">Last 30 days</button><button>Last 7 days</button><button>Custom range</button></div><button className="export-button">⇩ &nbsp; Export report</button></div>
-      <div className="stats-grid">{stats.map(([label, value, change, color]) => <article className="stat-card" key={label}><div className={`stat-icon ${color}`}>◈</div><span>{label}</span><strong>{value}</strong><small className={change.startsWith('-') ? 'down' : ''}>{change} <i>vs previous period</i></small></article>)}</div>
-      <div className="dashboard-grid"><article className="panel chart-panel"><div className="panel-title"><div><h2>{user ? 'Activité de mes CV' : 'User growth'}</h2><p>{user ? 'Suivi de vos candidatures' : 'New accounts created over time'}</p></div><button>Monthly ▾</button></div><div className="chart"><div className="chart-lines"><span>$80k</span><span>$60k</span><span>$40k</span><span>$20k</span><span>$0</span></div><div className="bars">{[32, 45, 39, 57, 53, 68, 61, 77, 72, 84, 76, 92].map((height, index) => <i style={{ height: `${height}%` }} key={index} />)}</div><div className="chart-labels"><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span></div></div></article><article className="panel activity-panel"><div className="panel-title"><div><h2>Recent activity</h2><p>Latest workspace events</p></div><button>View all →</button></div><ul className="activity-list"><li><span className="activity-dot purple">♙</span><div><b>{user ? 'CV mis à jour' : 'New user registered'}</b><small>{user ? 'Votre CV Product Designer est à 92%' : 'Sarah Jenkins joined the platform'}</small></div><time>2m ago</time></li><li><span className="activity-dot green">✓</span><div><b>{user ? 'Candidature envoyée' : 'Resume approved'}</b><small>{user ? 'Marketing Manager · James Wilson' : 'Marketing Manager · James Wilson'}</small></div><time>18m ago</time></li><li><span className="activity-dot orange">!</span><div><b>Support ticket opened</b><small>Issue with resume export</small></div><time>1h ago</time></li></ul></article></div>
-      <article className="panel table-panel"><div className="panel-title"><div><h2>{user ? 'Mes CV récents' : 'Top active users'}</h2><p>{user ? 'Documents récemment modifiés' : 'Users with the highest engagement'}</p></div><button>View all →</button></div><table><thead><tr><th>{user ? 'CV' : 'USER'}</th><th>STATUS</th><th>LAST UPDATED</th><th>PROGRESS</th><th></th></tr></thead><tbody>{[['Sarah Jenkins', 'Product Designer', 'Active', '92%'], ['James Wilson', 'Marketing Manager', 'Active', '76%'], ['Maya Patel', 'Software Engineer', 'Draft', '54%'], ['David Chen', 'UX Researcher', 'Active', '88%']].map(([name, job, status, progress], index) => <tr key={name}><td><span className="table-avatar">{name.split(' ').map(word => word[0]).join('')}</span><b>{user ? job : name}</b><small>{user ? 'Mis à jour récemment' : job}</small></td><td><span className={`status ${status.toLowerCase()}`}>{status}</span></td><td>Sep {index + 1}, 2026</td><td><div className="progress"><i style={{ width: progress }} /></div><small>{progress}</small></td><td><button className="more">•••</button></td></tr>)}</tbody></table></article>
-      <button className="switch-dashboard" onClick={() => onSwitchRole(user ? 'admin' : 'user')}>Preview {user ? 'admin' : 'user'} dashboard</button>
-    </section>
-  </main>
+function Dashboard({ role, onNavigate, onSwitchRole, registeredUser, onUpdateUser, onLogout }) {
+  if (role === 'user') {
+    return (
+      <UserDashboard
+        key={registeredUser?.email ? `user_${registeredUser.email.trim().toLowerCase()}` : 'guest_session'}
+        currentUser={registeredUser}
+        onLogout={onLogout || (() => onNavigate('signin'))}
+        onSwitchRole={onSwitchRole}
+        onUpdateUser={onUpdateUser}
+      />
+    )
+  }
+  return (
+    <AdminDashboard
+      onLogout={onLogout || (() => onNavigate('signin'))}
+      onNavigate={onNavigate}
+      onSwitchRole={onSwitchRole}
+    />
+  )
 }
 
 export default App
+
